@@ -60,6 +60,23 @@ struct DragStart(Option<Vec3>);
 
 // 1秒あたりに減る速度
 const FRICTION: f32 = 6.0;
+
+#[derive(Component)]
+struct Wall {
+    /// 壁の半分の大きさ
+    half: Vec2,
+}
+
+#[derive(Component)]
+struct Health(f32);
+
+const WALL_HEIGHT: f32 = 1.0;
+const PLAYER_RADIUS: f32 = 0.5;
+const MAX_HEALTH: f32 = 100.0;
+const DAMAGE_PER_SPEED: f32 = 0.5;
+const DAMAGE_MIN_SPEED: f32 = 2.0;
+const BOUNCE: f32 = 0.5;
+
 // スピードを0とみなす閾値
 const SPEED_THRESHOLD_ZERO: f32 = 0.05;
 
@@ -75,6 +92,7 @@ fn main() {
                 switch_form,
                 drag_input,
                 movement,
+                wall_collision,
             )
             .chain()
         )
@@ -119,10 +137,112 @@ fn setup(
             Player,
             Velocity::default(),
             Form::Human,
+            Health(MAX_HEALTH),
             Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
             MeshMaterial3d(materials.add(Color::srgb(0.9, 0.7, 0.6))),
             Transform::from_xyz(0.0, 0.5, 0.0),
     ));
+
+    // 壁
+    // 外周
+    spawm_wall(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec2::new(-10.5, 0.0),
+        Vec2::new(1.0, 200.0)
+    );
+    spawm_wall(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec2::new(10.5, 0.0),
+        Vec2::new(1.0, 200.0)
+    );
+    spawm_wall(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec2::new(0.0, -100.5),
+        Vec2::new(22.0, 1.0)
+    );
+    spawm_wall(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec2::new(0.0, 100.5),
+        Vec2::new(22.0, 1.0)
+    );
+    // 練習用
+    spawm_wall(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec2::new(0.0, -5.0),
+        Vec2::new(8.0, 1.0)
+    );
+}
+
+const WALL_COLOR: Color = Color::srgb(0.4, 0.35, 0.3);
+
+/// 壁を出す
+fn spawm_wall(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    center: Vec2,
+    size: Vec2,
+) {
+    commands.spawn((
+        Wall { half: size / 2.0 },
+        Mesh3d(meshes.add(Cuboid::new(size.x, WALL_HEIGHT, size.y))),
+        MeshMaterial3d(materials.add(WALL_COLOR)),
+        Transform::from_xyz(center.x, WALL_HEIGHT / 2.0, center.y),
+    ));
+}
+
+fn wall_collision(
+    walls: Query<(&Transform, &Wall), Without<Player>>,
+    player: Single<(&mut Transform, &mut Velocity, &mut Health), With<Player>>,
+) {
+    let (
+        mut transform,
+        mut velocity,
+        mut health
+    ) = player.into_inner();
+
+    for (wall_transform, wall) in &walls {
+        let p = Vec2::new(transform.translation.x, transform.translation.z);
+        let c = Vec2::new(wall_transform.translation.x, wall_transform.translation.z);
+
+        // 壁の矩形のうち、プレイヤーの中心に一番近い点
+        let closest = p.clamp(c - wall.half, c + wall.half);
+        let diff = p - closest;
+        let dist = diff.length();
+        if PLAYER_RADIUS <= dist || dist == 0.0 {
+            continue;
+        }
+
+        // 壁の外に押し出す
+        let normal = diff / dist;
+        let push = normal * (PLAYER_RADIUS - dist);
+        transform.translation.x += push.x;
+        transform.translation.z += push.y;
+
+        // 壁に向かう速さ成分があれば、跳ね返してダメージ
+        let v = Vec2::new(velocity.0.x, velocity.0.z);
+        let into_wall = -v.dot(normal);
+        if into_wall > 0.0 {
+            let bounced = v + normal * into_wall * (1.0 + BOUNCE);
+            velocity.0.x = bounced.x;
+            velocity.0.z = bounced.y;
+
+            if into_wall > DAMAGE_MIN_SPEED {
+                health.0 -= into_wall * DAMAGE_PER_SPEED;
+                info!("HP: {:.1}", health.0);
+            }
+        }
+    }
 }
 
 /// 画面上のカーソル位置を地面上の座標に変換
