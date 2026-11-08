@@ -4,6 +4,7 @@ use bevy::prelude::*;
 const CAMERA_X: f32 = 0.0;
 const CAMERA_Y: f32 = 14.0;
 const CAMERA_Z: f32 = 6.0;
+const CAMERA_FOLLOW_SPEED: f32 = 5.0;
 
 const LIGHT_X: f32 = 4.0;
 const LIGHT_Y: f32 = 10.0;
@@ -93,6 +94,7 @@ fn main() {
                 drag_input,
                 movement,
                 wall_collision,
+                camera_follow,
             )
             .chain()
         )
@@ -322,4 +324,14 @@ fn switch_form(
             m.base_color = form.color();
         }
     }
+}
+
+fn camera_follow(
+    time: Res<Time>,
+    player: Single<&Transform, (With<Player>, Without<Camera3d>)>,
+    mut camera: Single<&mut Transform, (With<Camera3d>, Without<Player>)>,
+) {
+    let target = player.translation + Vec3::new(CAMERA_X, CAMERA_Y, CAMERA_Z);
+    let t = 1.0 - (-CAMERA_FOLLOW_SPEED * time.delta_secs()).exp();
+    camera.translation = camera.translation.lerp(target, t);
 }
