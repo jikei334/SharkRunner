@@ -9,6 +9,46 @@ const LIGHT_X: f32 = 4.0;
 const LIGHT_Y: f32 = 10.0;
 const LIGHT_Z: f32 = 4.0;
 
+#[derive(Component, Clone, Copy, PartialEq)]
+enum Form {
+    Human,
+    Shark,
+}
+
+impl Form {
+    const HUMAN_POWER: f32 = 3.0;
+    const SHARK_POWER: f32 = 6.0;
+
+    const HUMAN_MAX_SPEED: f32 = 10.0;
+    const SHARK_MAX_SPEED: f32 = 30.0;
+
+    const HUMAN_COLOR: Color = Color::srgb(0.9, 0.7, 0.6);
+    const SHARK_COLOR: Color = Color::srgb(0.3, 0.4, 0.6);
+
+    /// 引っ張りの長さから速度への倍率
+    fn power(self) -> f32 {
+        match self {
+            Form::Human => Self::HUMAN_POWER,
+            Form::Shark => Self::SHARK_POWER,
+        }
+    }
+
+    /// 速度の上限
+    fn max_speed(self) -> f32 {
+        match self {
+            Form::Human => Self::HUMAN_MAX_SPEED,
+            Form::Shark => Self::SHARK_MAX_SPEED,
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            Form::Human => Self::HUMAN_COLOR,
+            Form::Shark => Self::SHARK_COLOR,
+        }
+    }
+}
+
 #[derive(Component)]
 struct Player;
 
@@ -18,10 +58,6 @@ struct Velocity(Vec3);
 #[derive(Resource, Default)]
 struct DragStart(Option<Vec3>);
 
-// 引っ張りの長さから速度への倍率
-const POWER: f32 = 3.0;
-// 速度の上限
-const MAX_SPEED: f32 = 20.0;
 // 1秒あたりに減る速度
 const FRICTION: f32 = 6.0;
 // スピードを0とみなす閾値
@@ -33,7 +69,15 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.5, 0.7, 0.9)))
         .init_resource::<DragStart>()
         .add_systems(Startup, setup)
-        .add_systems(Update, (drag_input, movement).chain())
+        .add_systems(
+            Update,
+            (
+                switch_form,
+                drag_input,
+                movement,
+            )
+            .chain()
+        )
         .run();
 }
 
@@ -74,6 +118,7 @@ fn setup(
     commands.spawn((
             Player,
             Velocity::default(),
+            Form::Human,
             Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
             MeshMaterial3d(materials.add(Color::srgb(0.9, 0.7, 0.6))),
             Transform::from_xyz(0.0, 0.5, 0.0),
@@ -101,11 +146,12 @@ fn drag_input(
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
     mut drag: ResMut<DragStart>,
-    mut player: Single<&mut Velocity, With<Player>>,
+    mut player: Single<(&mut Velocity, &Form), With<Player>>,
 ) {
     let (camera, camera_transform) = camera.into_inner();
+    let (mut velocity, form) = player.into_inner();
 
-    if buttons.just_pressed(MouseButton::Left) && player.0.length() < 0.01 {
+    if buttons.just_pressed(MouseButton::Left) && velocity.0.length() < 0.01 {
         drag.0 = cursor_to_ground(&window, camera, camera_transform);
     }
 
@@ -116,7 +162,7 @@ fn drag_input(
         ) {
             // 引いた向きと逆に飛ぶ
             let pull = start - end;
-            player.0 = (pull * POWER).clamp_length_max(MAX_SPEED);
+            velocity.0 = (pull * form.power()).clamp_length_max(form.max_speed());
         }
     }
 }
@@ -133,6 +179,27 @@ fn movement(time: Res<Time>, mut query: Query<(&mut Transform, &mut Velocity)>) 
             if new_speed < SPEED_THRESHOLD_ZERO {
                 velocity.0 = Vec3::ZERO;
             }
+        }
+    }
+}
+
+fn switch_form(
+    keys: Res<ButtonInput<KeyCode>>,
+    player: Single<(&mut Form, &MeshMaterial3d<StandardMaterial>, &Velocity), With<Player>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let (
+        mut form,
+        material,
+        velocity
+    ) = player.into_inner();
+    if keys.just_pressed(KeyCode::Space) && velocity.0 == Vec3::ZERO {
+        *form = match *form {
+            Form::Human => Form::Shark,
+            Form::Shark => Form::Human,
+        };
+        if let Some(mut m) = materials.get_mut(&material.0) {
+            m.base_color = form.color();
         }
     }
 }
