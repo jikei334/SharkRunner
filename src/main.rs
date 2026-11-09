@@ -62,6 +62,20 @@ struct DragStart(Option<Vec3>);
 // 1秒あたりに減る速度
 const FRICTION: f32 = 6.0;
 
+#[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum GameState {
+    #[default]
+    Playing,
+    GameOver,
+    Clear,
+}
+
+#[derive(Component)]
+struct Woman;
+
+const WOMAN_RADIUS: f32 = 0.5;
+const GOAL_Z: f32 = -30.0;
+
 #[derive(Component)]
 struct Wall {
     /// 壁の半分の大きさ
@@ -86,6 +100,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .insert_resource(ClearColor(Color::srgb(0.5, 0.7, 0.9)))
         .init_resource::<DragStart>()
+        .init_state::<GameState>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -94,9 +109,13 @@ fn main() {
                 drag_input,
                 movement,
                 wall_collision,
+                woman_collision,
+                check_goal,
+                check_health,
                 camera_follow,
             )
             .chain()
+            .run_if(in_state(GameState::Playing)),
         )
         .run();
 }
@@ -183,6 +202,78 @@ fn setup(
         Vec2::new(0.0, -5.0),
         Vec2::new(8.0, 1.0)
     );
+
+    // ゴール
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(20.0, 0.05, 0.5))),
+        MeshMaterial3d(materials.add(Color::srgb(1.0, 0.9, 0.2))),
+        Transform::from_xyz(0.0, 0.03, GOAL_Z),
+    ));
+
+    // 女性
+    spawn_woman(&mut commands, &mut meshes, &mut materials, -4.0, -12.0);
+    spawn_woman(&mut commands, &mut meshes, &mut materials, 5.0, -18.0);
+    spawn_woman(&mut commands, &mut meshes, &mut materials, 0.0, -25.0);
+}
+
+/// 女性を出す
+fn spawn_woman(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    x: f32,
+    z: f32,
+) {
+    commands.spawn((
+        Woman,
+        Mesh3d(meshes.add(Capsule3d::new(0.35, 0.8))),
+        MeshMaterial3d(materials.add(Color::srgb(0.9, 0.3, 0.5))),
+        Transform::from_xyz(x, 0.75, z),
+    ));
+}
+
+fn woman_collision(
+    mut commands: Commands,
+    mut next_state: ResMut<NextState<GameState>>,
+    women: Query<(Entity, &Transform), (With<Woman>, Without<Player>)>,
+    player: Single<(&Transform, &Form), With<Player>>,
+) {
+    let (player_transform, form) = player.into_inner();
+    for (entity, woman_transform) in &women {
+        let distance = player_transform.translation.distance(woman_transform.translation);
+        if distance < PLAYER_RADIUS + WOMAN_RADIUS {
+            match *form {
+                Form::Shark => {
+                    commands.entity(entity).despawn();
+                    info!("食べた!");
+                },
+                Form::Human => {
+                    next_state.set(GameState::GameOver);
+                    info!("捕まった!");
+                },
+            }
+        }
+    }
+}
+
+fn check_goal(
+    mut next_state: ResMut<NextState<GameState>>,
+    player: Single<&Transform, With<Player>>,
+) {
+    if player.translation.z < GOAL_Z {
+        next_state.set(GameState::Clear);
+        info!("ゴール!");
+    }
+}
+
+fn check_health(
+    mut next_state: ResMut<NextState<GameState>>,
+    health: Single<&Health, With<Player>>,
+) {
+    if health.0 <= 0.0 {
+        next_state.set(GameState::GameOver);
+        info!("HP 0");
+    }
 }
 
 const WALL_COLOR: Color = Color::srgb(0.4, 0.35, 0.3);
