@@ -10,6 +10,9 @@ const LIGHT_X: f32 = 4.0;
 const LIGHT_Y: f32 = 10.0;
 const LIGHT_Z: f32 = 4.0;
 
+#[derive(Component)]
+struct LevelEntity;
+
 #[derive(Component, Clone, Copy, PartialEq)]
 enum Form {
     Human,
@@ -101,7 +104,15 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.5, 0.7, 0.9)))
         .init_resource::<DragStart>()
         .init_state::<GameState>()
-        .add_systems(Startup, setup)
+        .add_systems(Startup, setup_scene)
+        .add_systems(
+            OnEnter(GameState::Playing),
+            (cleanup_level, setup_level).chain(),
+        )
+        .add_systems(
+            Update,
+            restart_input.run_if(not(in_state(GameState::Playing))),
+        )
         .add_systems(
             Update,
             (
@@ -120,11 +131,7 @@ fn main() {
         .run();
 }
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+fn setup_scene(mut commands: Commands) {
     // カメラ
     commands.spawn((
             Camera3d::default(),
@@ -146,15 +153,23 @@ fn setup(
             )
             .looking_at(Vec3::ZERO, Vec3::Y),
     ));
+}
 
+fn setup_level(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     // 地面
     commands.spawn((
+            LevelEntity,
             Mesh3d(meshes.add(Plane3d::default().mesh().size(20.0, 200.0))),
             MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
     ));
 
     // プレイヤー
     commands.spawn((
+            LevelEntity,
             Player,
             Velocity::default(),
             Form::Human,
@@ -205,6 +220,7 @@ fn setup(
 
     // ゴール
     commands.spawn((
+        LevelEntity,
         Mesh3d(meshes.add(Cuboid::new(20.0, 0.05, 0.5))),
         MeshMaterial3d(materials.add(Color::srgb(1.0, 0.9, 0.2))),
         Transform::from_xyz(0.0, 0.03, GOAL_Z),
@@ -225,6 +241,7 @@ fn spawn_woman(
     z: f32,
 ) {
     commands.spawn((
+        LevelEntity,
         Woman,
         Mesh3d(meshes.add(Capsule3d::new(0.35, 0.8))),
         MeshMaterial3d(materials.add(Color::srgb(0.9, 0.3, 0.5))),
@@ -287,6 +304,7 @@ fn spawm_wall(
     size: Vec2,
 ) {
     commands.spawn((
+        LevelEntity,
         Wall { half: size / 2.0 },
         Mesh3d(meshes.add(Cuboid::new(size.x, WALL_HEIGHT, size.y))),
         MeshMaterial3d(materials.add(WALL_COLOR)),
@@ -425,4 +443,24 @@ fn camera_follow(
     let target = player.translation + Vec3::new(CAMERA_X, CAMERA_Y, CAMERA_Z);
     let t = 1.0 - (-CAMERA_FOLLOW_SPEED * time.delta_secs()).exp();
     camera.translation = camera.translation.lerp(target, t);
+}
+
+fn cleanup_level(
+    mut commands: Commands,
+    entities: Query<Entity, With<LevelEntity>>,
+    mut drag: ResMut<DragStart>,
+) {
+    for entity in &entities {
+        commands.entity(entity).despawn();
+    }
+    drag.0 = None;
+}
+
+fn restart_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    if keys.just_pressed(KeyCode::KeyR) {
+        next_state.set(GameState::Playing);
+    }
 }
