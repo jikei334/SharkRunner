@@ -13,6 +13,12 @@ const LIGHT_Z: f32 = 4.0;
 #[derive(Component)]
 struct LevelEntity;
 
+#[derive(Component)]
+struct HpText;
+
+#[derive(Component)]
+struct HpBarFill;
+
 #[derive(Component, Clone, Copy, PartialEq)]
 enum Form {
     Human,
@@ -104,7 +110,8 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.5, 0.7, 0.9)))
         .init_resource::<DragStart>()
         .init_state::<GameState>()
-        .add_systems(Startup, setup_scene)
+        .add_systems(Startup, (setup_scene, setup_ui))
+        .add_systems(Update, update_hp_ui)
         .add_systems(
             OnEnter(GameState::Playing),
             (cleanup_level, setup_level).chain(),
@@ -129,6 +136,47 @@ fn main() {
             .run_if(in_state(GameState::Playing)),
         )
         .run();
+}
+
+fn setup_ui(mut commands: Commands) {
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(12.0),
+            left: Val::Px(12.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(4.0),
+            ..default()
+        },
+        children![
+            // 文字
+            (
+                HpText,
+                Text::new("HP: 100"),
+                TextFont { font_size: FontSize::Px(24.0), ..default() },
+                TextColor(Color::WHITE),
+            ),
+            // バーの背景
+            (
+                Node {
+                    width: Val::Px(200.0),
+                    height: Val::Px(16.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.2, 0.2, 0.2)),
+                // バーの中身
+                children![(
+                    HpBarFill,
+                    Node {
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.2, 0.8, 0.3)),
+                )]
+            )
+        ]
+    ));
 }
 
 fn setup_scene(mut commands: Commands) {
@@ -230,6 +278,16 @@ fn setup_level(
     spawn_woman(&mut commands, &mut meshes, &mut materials, -4.0, -12.0);
     spawn_woman(&mut commands, &mut meshes, &mut materials, 5.0, -18.0);
     spawn_woman(&mut commands, &mut meshes, &mut materials, 0.0, -25.0);
+}
+
+fn update_hp_ui(
+    health: Single<&Health, With<Player>>,
+    mut text: Single<&mut Text, With<HpText>>,
+    mut fill: Single<&mut Node, With<HpBarFill>>,
+) {
+    let ratio = (health.0 / MAX_HEALTH).clamp(0.0, 1.0);
+    text.0 = format!("HP: {:.0}", health.0.max(0.0));
+    fill.width = Val::Percent(ratio * 100.0);
 }
 
 /// 女性を出す
@@ -350,7 +408,6 @@ fn wall_collision(
 
             if into_wall > DAMAGE_MIN_SPEED {
                 health.0 -= into_wall * DAMAGE_PER_SPEED;
-                info!("HP: {:.1}", health.0);
             }
         }
     }
