@@ -1,4 +1,8 @@
+pub mod player;
+
 use bevy::prelude::*;
+
+use player::{Form, Player};
 
 
 const CAMERA_X: f32 = 0.0;
@@ -18,49 +22,6 @@ struct HpText;
 
 #[derive(Component)]
 struct HpBarFill;
-
-#[derive(Component, Clone, Copy, PartialEq)]
-enum Form {
-    Human,
-    Shark,
-}
-
-impl Form {
-    const HUMAN_POWER: f32 = 3.0;
-    const SHARK_POWER: f32 = 6.0;
-
-    const HUMAN_MAX_SPEED: f32 = 10.0;
-    const SHARK_MAX_SPEED: f32 = 30.0;
-
-    const HUMAN_COLOR: Color = Color::srgb(0.9, 0.7, 0.6);
-    const SHARK_COLOR: Color = Color::srgb(0.3, 0.4, 0.6);
-
-    /// 引っ張りの長さから速度への倍率
-    fn power(self) -> f32 {
-        match self {
-            Form::Human => Self::HUMAN_POWER,
-            Form::Shark => Self::SHARK_POWER,
-        }
-    }
-
-    /// 速度の上限
-    fn max_speed(self) -> f32 {
-        match self {
-            Form::Human => Self::HUMAN_MAX_SPEED,
-            Form::Shark => Self::SHARK_MAX_SPEED,
-        }
-    }
-
-    fn color(self) -> Color {
-        match self {
-            Form::Human => Self::HUMAN_COLOR,
-            Form::Shark => Self::SHARK_COLOR,
-        }
-    }
-}
-
-#[derive(Component)]
-struct Player;
 
 #[derive(Component, Default)]
 struct Velocity(Vec3);
