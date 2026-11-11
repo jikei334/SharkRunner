@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 
 
+pub const PLAYER_RADIUS: f32 = 0.5;
+
 #[derive(Component, Clone, Copy, PartialEq)]
 pub enum Form {
     Human,

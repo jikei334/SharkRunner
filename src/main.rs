@@ -1,8 +1,10 @@
 pub mod player;
+pub mod woman;
 
 use bevy::prelude::*;
 
-use player::{Form, Player};
+use player::{Form, Player, PLAYER_RADIUS};
+use woman::{spawn_woman, Woman, woman_collision};
 
 
 const CAMERA_X: f32 = 0.0;
@@ -15,7 +17,7 @@ const LIGHT_Y: f32 = 10.0;
 const LIGHT_Z: f32 = 4.0;
 
 #[derive(Component)]
-struct LevelEntity;
+pub struct LevelEntity;
 
 #[derive(Component)]
 struct HpText;
@@ -33,17 +35,13 @@ struct DragStart(Option<Vec3>);
 const FRICTION: f32 = 6.0;
 
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
-enum GameState {
+pub enum GameState {
     #[default]
     Playing,
     GameOver,
     Clear,
 }
 
-#[derive(Component)]
-struct Woman;
-
-const WOMAN_RADIUS: f32 = 0.5;
 const GOAL_Z: f32 = -30.0;
 
 #[derive(Component)]
@@ -56,7 +54,6 @@ struct Wall {
 struct Health(f32);
 
 const WALL_HEIGHT: f32 = 1.0;
-const PLAYER_RADIUS: f32 = 0.5;
 const MAX_HEALTH: f32 = 100.0;
 const DAMAGE_PER_SPEED: f32 = 0.5;
 const DAMAGE_MIN_SPEED: f32 = 2.0;
@@ -64,6 +61,30 @@ const BOUNCE: f32 = 0.5;
 
 // スピードを0とみなす閾値
 const SPEED_THRESHOLD_ZERO: f32 = 0.05;
+
+struct Rng(u64);
+
+impl Rng {
+    fn new(seed: u64) -> Self {
+        Rng(seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) | 1)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545F4914F6CDD1D)
+    }
+
+    fn range(&mut self, n: usize) -> usize {
+        (self.next_u64() % n as u64) as usize
+    }
+}
+
+#[derive(Resource)]
+struct Seed(u64);
 
 fn main() {
     App::new()
@@ -249,47 +270,6 @@ fn update_hp_ui(
     let ratio = (health.0 / MAX_HEALTH).clamp(0.0, 1.0);
     text.0 = format!("HP: {:.0}", health.0.max(0.0));
     fill.width = Val::Percent(ratio * 100.0);
-}
-
-/// 女性を出す
-fn spawn_woman(
-    commands: &mut Commands,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-    x: f32,
-    z: f32,
-) {
-    commands.spawn((
-        LevelEntity,
-        Woman,
-        Mesh3d(meshes.add(Capsule3d::new(0.35, 0.8))),
-        MeshMaterial3d(materials.add(Color::srgb(0.9, 0.3, 0.5))),
-        Transform::from_xyz(x, 0.75, z),
-    ));
-}
-
-fn woman_collision(
-    mut commands: Commands,
-    mut next_state: ResMut<NextState<GameState>>,
-    women: Query<(Entity, &Transform), (With<Woman>, Without<Player>)>,
-    player: Single<(&Transform, &Form), With<Player>>,
-) {
-    let (player_transform, form) = player.into_inner();
-    for (entity, woman_transform) in &women {
-        let distance = player_transform.translation.distance(woman_transform.translation);
-        if distance < PLAYER_RADIUS + WOMAN_RADIUS {
-            match *form {
-                Form::Shark => {
-                    commands.entity(entity).despawn();
-                    info!("食べた!");
-                },
-                Form::Human => {
-                    next_state.set(GameState::GameOver);
-                    info!("捕まった!");
-                },
-            }
-        }
-    }
 }
 
 fn check_goal(
