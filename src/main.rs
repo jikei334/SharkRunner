@@ -1,3 +1,4 @@
+pub mod maze;
 pub mod player;
 pub mod utils;
 pub mod wall;
@@ -5,7 +6,9 @@ pub mod woman;
 
 use bevy::prelude::*;
 
+use maze::Maze;
 use player::{Form, Player, PLAYER_RADIUS};
+use utils::{Rng, Seed};
 use wall::{spawm_wall, Wall, wall_collision};
 use woman::{spawn_woman, Woman, woman_collision};
 
@@ -18,6 +21,14 @@ const CAMERA_FOLLOW_SPEED: f32 = 5.0;
 const LIGHT_X: f32 = 4.0;
 const LIGHT_Y: f32 = 10.0;
 const LIGHT_Z: f32 = 4.0;
+
+// 横のセルの数
+const MAZE_W: usize = 5;
+// 縦のセルの数
+const MAZE_H: usize = 12;
+// 壁を壊す試行回数
+const EXTRA_OPENINGS: usize = 24;
+const WOMEN_COUNT: usize = 8;
 
 #[derive(Component)]
 pub struct LevelEntity;
@@ -45,8 +56,6 @@ pub enum GameState {
     Clear,
 }
 
-const GOAL_Z: f32 = -30.0;
-
 #[derive(Component)]
 pub struct Health(f32);
 
@@ -61,6 +70,7 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .insert_resource(ClearColor(Color::srgb(0.5, 0.7, 0.9)))
+        .insert_resource(Seed::new_with_time())
         .init_resource::<DragStart>()
         .init_state::<GameState>()
         .add_systems(Startup, (setup_scene, setup_ui))
@@ -160,12 +170,24 @@ fn setup_level(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    seed: Res<Seed>,
 ) {
+    let mut rng = Rng::new(seed.into_inner());
+    let maze = Maze::new(MAZE_H, MAZE_W, EXTRA_OPENINGS, &mut rng);
     // 地面
+    let ground_z = (maze.tile_to_world(0, 0).y + maze.tile_to_world(0, maze.tile_rows() - 1).y) / 2.0;
     commands.spawn((
             LevelEntity,
-            Mesh3d(meshes.add(Plane3d::default().mesh().size(20.0, 200.0))),
+            Mesh3d(meshes.add(
+                Plane3d::default()
+                    .mesh()
+                    .size(
+                        maze.tile_cols() as f32 * maze.tile(),
+                        maze.tile_rows() as f32 * maze.tile(),
+                    ),
+            )),
             MeshMaterial3d(materials.add(Color::srgb(0.3, 0.5, 0.3))),
+            Transform::from_xyz(0.0, 0.0, ground_z),
     ));
 
     // プレイヤー
@@ -181,56 +203,47 @@ fn setup_level(
     ));
 
     // 壁
-    // 外周
-    spawm_wall(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        Vec2::new(-10.5, 0.0),
-        Vec2::new(1.0, 200.0)
-    );
-    spawm_wall(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        Vec2::new(10.5, 0.0),
-        Vec2::new(1.0, 200.0)
-    );
-    spawm_wall(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        Vec2::new(0.0, -100.5),
-        Vec2::new(22.0, 1.0)
-    );
-    spawm_wall(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        Vec2::new(0.0, 100.5),
-        Vec2::new(22.0, 1.0)
-    );
-    // 練習用
-    spawm_wall(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        Vec2::new(0.0, -5.0),
-        Vec2::new(8.0, 1.0)
-    );
+    for row in 0..maze.tile_rows() {
+        let mut col = 0;
+        while col < maze.tile_cols() {
+            if !maze.is_wall(col, row) {
+                col += 1;
+                continue;
+            }
+            let start = col;
+            while col < maze.tile_cols() && maze.is_wall(col, row) {
+                col += 1;
+            }
+            let len = col - start;
+            let center = (maze.tile_to_world(start, row) + maze.tile_to_world(col - 1, row)) / 2.0;
+            spawm_wall(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                center,
+                Vec2::new(len as f32 * maze.tile(), maze.tile()),
+            );
+        }
+    }
 
     // ゴール
     commands.spawn((
         LevelEntity,
-        Mesh3d(meshes.add(Cuboid::new(20.0, 0.05, 0.5))),
+        Mesh3d(meshes.add(Cuboid::new(
+            (maze.tile_cols() - 2) as f32 * maze.tile(),
+            0.05,
+            0.5
+        ))),
         MeshMaterial3d(materials.add(Color::srgb(1.0, 0.9, 0.2))),
-        Transform::from_xyz(0.0, 0.03, GOAL_Z),
+        Transform::from_xyz(0.0, 0.03, maze.goal_z()),
     ));
 
     // 女性
-    spawn_woman(&mut commands, &mut meshes, &mut materials, -4.0, -12.0);
-    spawn_woman(&mut commands, &mut meshes, &mut materials, 5.0, -18.0);
-    spawn_woman(&mut commands, &mut meshes, &mut materials, 0.0, -25.0);
+    for spot in maze.pick_women_spots(WOMEN_COUNT, &mut rng) {
+        spawn_woman(&mut commands, &mut meshes, &mut materials, spot.x, spot.y);
+    }
+
+    commands.insert_resource(maze);
 }
 
 fn update_hp_ui(
@@ -245,9 +258,10 @@ fn update_hp_ui(
 
 fn check_goal(
     mut next_state: ResMut<NextState<GameState>>,
+    maze: Res<Maze>,
     player: Single<&Transform, With<Player>>,
 ) {
-    if player.translation.z < GOAL_Z {
+    if player.translation.z < maze.goal_z() {
         next_state.set(GameState::Clear);
         info!("ゴール!");
     }
