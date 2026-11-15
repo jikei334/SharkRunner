@@ -89,10 +89,6 @@ fn main() {
         )
         .add_systems(
             Update,
-            restart_input.run_if(not(in_state(GameState::Playing))),
-        )
-        .add_systems(
-            Update,
             (
                 switch_form,
                 drag_input,
@@ -108,6 +104,8 @@ fn main() {
             .chain()
             .run_if(in_state(GameState::Playing)),
         )
+        .add_systems(OnEnter(GameState::GameOver), show_game_over)
+        .add_systems(OnEnter(GameState::Clear), show_clear)
         .run();
 }
 
@@ -396,11 +394,83 @@ fn cleanup_level(
     drag.0 = None;
 }
 
-fn restart_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut next_state: ResMut<NextState<GameState>>,
+fn spawn_result_overlay(
+    commands: &mut Commands,
+    title: &str,
+    color: Color,
+    button_label: &str,
+    next_maze: bool,
 ) {
-    if keys.just_pressed(KeyCode::KeyR) {
-        next_state.set(GameState::Playing);
-    }
+    commands.spawn((
+        LevelEntity,
+        Node {
+            position_type:PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            row_gap: Val::Px(24.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+    ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new(title),
+                TextFont { font_size: FontSize::Px(72.0), ..default() },
+                TextColor(color),
+            ));
+
+            let mut button = parent.spawn((
+                Node {
+                    padding: UiRect::axes(Val::Px(32.0), Val::Px(14.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
+                children![(
+                    Text::new(button_label),
+                    TextFont { font_size: FontSize::Px(32.0), ..default() },
+                    TextColor(Color::WHITE),
+                )],
+            ));
+            if next_maze {
+                button.observe(on_next_maze_click);
+            } else {
+                button.observe(on_retry_click);
+            }
+        });
+}
+
+fn show_game_over(mut commands: Commands) {
+    spawn_result_overlay(
+        &mut commands,
+        "GAME OVER",
+        Color::srgb(0.9, 0.2, 0.2),
+        "RETRY",
+        false,
+    );
+}
+
+fn show_clear(mut commands: Commands) {
+    spawn_result_overlay(
+        &mut commands,
+        "CLEAR!",
+        Color::srgb(1.0, 0.9, 0.2),
+        "NEXT MAZE",
+        true,
+    );
+}
+
+fn on_retry_click(_click: On<Pointer<Click>>, mut next_state: ResMut<NextState<GameState>>) {
+    next_state.set(GameState::Playing);
+}
+
+fn on_next_maze_click(
+    _click: On<Pointer<Click>>,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut seed: ResMut<Seed>,
+) {
+    *seed = Seed::new_with_time();
+    next_state.set(GameState::Playing);
 }
