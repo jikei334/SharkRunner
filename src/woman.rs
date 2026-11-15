@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::{GameState, LevelEntity};
-use crate::player::{Form, Player, PLAYER_RADIUS};
+use crate::player::{Form, Player};
 
 
 const WOMAN_RADIUS: f32 = 0.5;
@@ -35,7 +35,7 @@ pub fn woman_collision(
     let (player_transform, form) = player.into_inner();
     for (entity, woman_transform) in &women {
         let distance = player_transform.translation.distance(woman_transform.translation);
-        if distance < PLAYER_RADIUS + WOMAN_RADIUS {
+        if distance < form.radius() + WOMAN_RADIUS {
             match *form {
                 Form::Shark => {
                     commands.entity(entity).despawn();

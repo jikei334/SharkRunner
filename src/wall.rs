@@ -8,7 +8,7 @@ use crate::{
     LevelEntity,
     Velocity
 };
-use crate::player::{Player, PLAYER_RADIUS};
+use crate::player::{Form, Player};
 
 
 const WALL_HEIGHT: f32 = 1.0;
@@ -40,13 +40,15 @@ pub fn spawm_wall(
 
 pub fn wall_collision(
     walls: Query<(&Transform, &Wall), Without<Player>>,
-    player: Single<(&mut Transform, &mut Velocity, &mut Health), With<Player>>,
+    player: Single<(&mut Transform, &mut Velocity, &mut Health, &Form), With<Player>>,
 ) {
     let (
         mut transform,
         mut velocity,
-        mut health
+        mut health,
+        form,
     ) = player.into_inner();
+    let radius = form.radius();
 
     for (wall_transform, wall) in &walls {
         let p = Vec2::new(transform.translation.x, transform.translation.z);
@@ -56,13 +58,13 @@ pub fn wall_collision(
         let closest = p.clamp(c - wall.half, c + wall.half);
         let diff = p - closest;
         let dist = diff.length();
-        if PLAYER_RADIUS <= dist || dist == 0.0 {
+        if radius <= dist || dist == 0.0 {
             continue;
         }
 
         // 壁の外に押し出す
         let normal = diff / dist;
-        let push = normal * (PLAYER_RADIUS - dist);
+        let push = normal * (radius - dist);
         transform.translation.x += push.x;
         transform.translation.z += push.y;
 

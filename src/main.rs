@@ -5,9 +5,14 @@ pub mod wall;
 pub mod woman;
 
 use bevy::prelude::*;
+use bevy::asset::AssetMetaCheck;
 
 use maze::Maze;
-use player::{Form, Player, PLAYER_RADIUS};
+use player::{
+    Form, ModelRoot, Player, PLAYER_MODEL_PATH, Transforming,
+    finish_transform,
+    on_player_model_ready, setup_player_animations, update_player_visual,
+};
 use utils::{Rng, Seed};
 use wall::{spawm_wall, Wall, wall_collision};
 use woman::{spawn_woman, Woman, woman_collision};
@@ -68,12 +73,15 @@ const SPEED_THRESHOLD_ZERO: f32 = 0.05;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(AssetPlugin {
+            meta_check: AssetMetaCheck::Never,
+            ..default()
+        }))
         .insert_resource(ClearColor(Color::srgb(0.5, 0.7, 0.9)))
         .insert_resource(Seed::new_with_time())
         .init_resource::<DragStart>()
         .init_state::<GameState>()
-        .add_systems(Startup, (setup_scene, setup_ui))
+        .add_systems(Startup, (setup_scene, setup_ui, setup_player_animations))
         .add_systems(Update, update_hp_ui)
         .add_systems(
             OnEnter(GameState::Playing),
@@ -89,6 +97,8 @@ fn main() {
                 switch_form,
                 drag_input,
                 movement,
+                update_player_visual,
+                finish_transform,
                 wall_collision,
                 woman_collision,
                 check_goal,
@@ -171,6 +181,7 @@ fn setup_level(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     seed: Res<Seed>,
+    asset_server: Res<AssetServer>,
 ) {
     let mut rng = Rng::new(seed.into_inner());
     let maze = Maze::new(MAZE_H, MAZE_W, EXTRA_OPENINGS, &mut rng);
@@ -197,10 +208,20 @@ fn setup_level(
             Velocity::default(),
             Form::Human,
             Health(MAX_HEALTH),
-            Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
-            MeshMaterial3d(materials.add(Color::srgb(0.9, 0.7, 0.6))),
             Transform::from_xyz(0.0, 0.5, 0.0),
-    ));
+            Visibility::default(),
+    ))
+        .with_children(|parent| {
+            parent
+                .spawn((
+                    ModelRoot,
+                    WorldAssetRoot(
+                        asset_server.load(GltfAssetLabel::Scene(0).from_asset(PLAYER_MODEL_PATH)),
+                    ),
+                    Transform::from_xyz(0.0, -Form::HUMAN_RADIUS, 0.0),
+                ))
+                .observe(on_player_model_ready);
+        });
 
     // 壁
     for row in 0..maze.tile_rows() {
@@ -298,7 +319,7 @@ fn drag_input(
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
     mut drag: ResMut<DragStart>,
-    mut player: Single<(&mut Velocity, &Form), With<Player>>,
+    mut player: Single<(&mut Velocity, &Form), (With<Player>, Without<Transforming>)>,
 ) {
     let (camera, camera_transform) = camera.into_inner();
     let (mut velocity, form) = player.into_inner();
@@ -336,23 +357,21 @@ fn movement(time: Res<Time>, mut query: Query<(&mut Transform, &mut Velocity)>) 
 }
 
 fn switch_form(
+    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    player: Single<(&mut Form, &MeshMaterial3d<StandardMaterial>, &Velocity), With<Player>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    player: Single<(Entity, &mut Form, &Velocity), (With<Player>, Without<Transforming>)>,
 ) {
     let (
+        entity,
         mut form,
-        material,
         velocity
     ) = player.into_inner();
     if keys.just_pressed(KeyCode::Space) && velocity.0 == Vec3::ZERO {
-        *form = match *form {
+        let target = match *form {
             Form::Human => Form::Shark,
             Form::Shark => Form::Human,
         };
-        if let Some(mut m) = materials.get_mut(&material.0) {
-            m.base_color = form.color();
-        }
+        commands.entity(entity).insert(Transforming { target });
     }
 }
 
