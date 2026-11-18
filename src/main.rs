@@ -4,7 +4,7 @@ pub mod utils;
 pub mod wall;
 pub mod woman;
 
-use bevy::prelude::*;
+use bevy::{picking::events::Pointer, prelude::*};
 use bevy::asset::AssetMetaCheck;
 
 use maze::Maze;
@@ -53,6 +53,12 @@ struct DragStart(Option<Vec3>);
 // 1秒あたりに減る速度
 const FRICTION: f32 = 6.0;
 
+struct PointerInput {
+    pos: Vec2,
+    just_pressed: bool,
+    just_released: bool,
+}
+
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum GameState {
     #[default]
@@ -60,6 +66,9 @@ pub enum GameState {
     GameOver,
     Clear,
 }
+
+#[derive(Component)]
+struct FormButtonText;
 
 #[derive(Component)]
 pub struct Health(f32);
@@ -70,19 +79,30 @@ pub const DAMAGE_MIN_SPEED: f32 = 2.0;
 pub const BOUNCE: f32 = 0.5;
 // スピードを0とみなす閾値
 const SPEED_THRESHOLD_ZERO: f32 = 0.05;
+const PULL_THRESHOLD: f32 = 0.5;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(AssetPlugin {
-            meta_check: AssetMetaCheck::Never,
-            ..default()
-        }))
+        .add_plugins(DefaultPlugins
+            .set(AssetPlugin {
+                meta_check: AssetMetaCheck::Never,
+                ..default()
+            })
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    fit_canvas_to_parent: true,
+                    prevent_default_event_handling: true,
+                    ..default()
+                }),
+                ..default()
+            }),
+        )
         .insert_resource(ClearColor(Color::srgb(0.5, 0.7, 0.9)))
         .insert_resource(Seed::new_with_time())
         .init_resource::<DragStart>()
         .init_state::<GameState>()
         .add_systems(Startup, (setup_scene, setup_ui, setup_player_animations))
-        .add_systems(Update, update_hp_ui)
+        .add_systems(Update, (update_hp_ui, update_form_button_label))
         .add_systems(
             OnEnter(GameState::Playing),
             (cleanup_level, setup_level).chain(),
@@ -148,6 +168,24 @@ fn setup_ui(mut commands: Commands) {
             )
         ]
     ));
+    commands
+        .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(24.0),
+                    right: Val::Px(24.0),
+                    padding: UiRect::axes(Val::Px(28.0), Val::Px(18.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.2, 0.35, 0.6)),
+                children![(
+                    FormButtonText,
+                    Text::new("TO SHARK"),
+                    TextFont { font_size: FontSize::Px(28.0), ..default() },
+                    TextColor(Color::WHITE),
+                )],
+        ))
+        .observe(on_form_button_click);
 }
 
 fn setup_scene(mut commands: Commands) {
@@ -297,14 +335,13 @@ fn check_health(
 }
 
 /// 画面上のカーソル位置を地面上の座標に変換
-fn cursor_to_ground(
-    window: &Window,
+fn point_to_ground(
+    point: Vec2,
     camera: &Camera,
-    camera_transform: &GlobalTransform
+    camera_transform: &GlobalTransform,
 ) -> Option<Vec3> {
-    let cursor = window.cursor_position()?;
     let ray = camera
-        .viewport_to_world(camera_transform, cursor)
+        .viewport_to_world(camera_transform, point)
         .ok()?;
     let dist = ray
         .intersect_plane(Vec3::ZERO, InfinitePlane3d::new(Vec3::Y))?;
@@ -313,7 +350,8 @@ fn cursor_to_ground(
 
 /// 引っ張って離す入力システム
 fn drag_input(
-    buttons: Res<ButtonInput<MouseButton>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    touches: Res<Touches>,
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
     mut drag: ResMut<DragStart>,
@@ -322,17 +360,22 @@ fn drag_input(
     let (camera, camera_transform) = camera.into_inner();
     let (mut velocity, form) = player.into_inner();
 
-    if buttons.just_pressed(MouseButton::Left) && velocity.0.length() < 0.01 {
-        drag.0 = cursor_to_ground(&window, camera, camera_transform);
+    let Some(p) = read_pointer(&window, &mouse, &touches) else { return; };
+
+    if p.just_pressed && velocity.0 == Vec3::ZERO {
+        drag.0 = point_to_ground(p.pos, camera, camera_transform);
     }
 
-    if buttons.just_released(MouseButton::Left) {
+    if p.just_released {
         if let (Some(start), Some(end)) = (
             drag.0.take(),
-            cursor_to_ground(&window, camera, camera_transform),
+            point_to_ground(p.pos, camera, camera_transform),
         ) {
             // 引いた向きと逆に飛ぶ
             let pull = start - end;
+            if pull.length() < PULL_THRESHOLD {
+                return;
+            }
             velocity.0 = (pull * form.power()).clamp_length_max(form.max_speed());
         }
     }
@@ -354,22 +397,54 @@ fn movement(time: Res<Time>, mut query: Query<(&mut Transform, &mut Velocity)>) 
     }
 }
 
+fn on_form_button_click(
+    _click: On<Pointer<Click>>,
+    mut commands: Commands,
+    player: Single<(Entity, &Form, &Velocity), (With<Player>, Without<Transforming>)>,
+) {
+    let (entity, form, velocity) = player.into_inner();
+    request_transform(&mut commands, entity, form, velocity);
+}
+
+fn update_form_button_label(
+    form: Single<&Form, With<Player>>,
+    mut text: Single<&mut Text, With<FormButtonText>>,
+) {
+    text.0 = match **form {
+        Form::Human => "TO SHARK".to_string(),
+        Form::Shark => "TO HUMAN".to_string(),
+    };
+}
+
+fn request_transform(
+    commands: &mut Commands,
+    entity: Entity,
+    form: &Form,
+    velocity: &Velocity,
+) {
+    // 動いている間は変身できない
+    if velocity.0 != Vec3::ZERO {
+        return;
+    }
+    let target = match *form {
+        Form::Human => Form::Shark,
+        Form::Shark => Form::Human,
+    };
+    commands.entity(entity).insert(Transforming { target });
+}
+
 fn switch_form(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    player: Single<(Entity, &mut Form, &Velocity), (With<Player>, Without<Transforming>)>,
+    player: Single<(Entity, &Form, &Velocity), (With<Player>, Without<Transforming>)>,
 ) {
-    let (
-        entity,
-        mut form,
-        velocity
-    ) = player.into_inner();
-    if keys.just_pressed(KeyCode::Space) && velocity.0 == Vec3::ZERO {
-        let target = match *form {
-            Form::Human => Form::Shark,
-            Form::Shark => Form::Human,
-        };
-        commands.entity(entity).insert(Transforming { target });
+    if keys.just_pressed(KeyCode::Space) {
+        let (
+            entity,
+            mut form,
+            velocity
+        ) = player.into_inner();
+        request_transform(&mut commands, entity, form, velocity);
     }
 }
 
@@ -473,4 +548,41 @@ fn on_next_maze_click(
 ) {
     *seed = Seed::new_with_time();
     next_state.set(GameState::Playing);
+}
+
+fn read_pointer(
+    window: &Window,
+    mouse: &ButtonInput<MouseButton>,
+    touches: &Touches,
+) -> Option<PointerInput> {
+    if let Some(t) = touches.iter_just_pressed().next() {
+        return Some(PointerInput {
+            pos: t.position(),
+            just_pressed: true,
+            just_released: false,
+        });
+    }
+
+    if let Some(t) = touches.iter_just_released().next() {
+        return Some(PointerInput {
+            pos: t.position(),
+            just_pressed: false,
+            just_released: true,
+        });
+    }
+
+    if let Some(t) = touches.iter().next() {
+        return Some(PointerInput {
+            pos: t.position(),
+            just_pressed: false,
+            just_released: false,
+        })
+    }
+
+    let pos = window.cursor_position()?;
+    Some(PointerInput {
+        pos,
+        just_pressed: mouse.just_pressed(MouseButton::Left),
+        just_released: mouse.just_released(MouseButton::Left),
+    })
 }
