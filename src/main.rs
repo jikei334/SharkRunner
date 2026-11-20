@@ -59,6 +59,9 @@ struct PointerInput {
     just_released: bool,
 }
 
+#[derive(Resource, Default)]
+struct Aim(Option<Vec3>);
+
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum GameState {
     #[default]
@@ -100,6 +103,7 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.5, 0.7, 0.9)))
         .insert_resource(Seed::new_with_time())
         .init_resource::<DragStart>()
+        .init_resource::<Aim>()
         .init_state::<GameState>()
         .add_systems(Startup, (setup_scene, setup_ui, setup_player_animations))
         .add_systems(Update, (update_hp_ui, update_form_button_label))
@@ -112,6 +116,7 @@ fn main() {
             (
                 switch_form,
                 drag_input,
+                update_facing,
                 movement,
                 update_player_visual,
                 finish_transform,
@@ -355,6 +360,7 @@ fn drag_input(
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
     mut drag: ResMut<DragStart>,
+    mut aim: ResMut<Aim>,
     mut player: Single<(&mut Velocity, &Form), (With<Player>, Without<Transforming>)>,
 ) {
     let (camera, camera_transform) = camera.into_inner();
@@ -379,6 +385,35 @@ fn drag_input(
             velocity.0 = (pull * form.power()).clamp_length_max(form.max_speed());
         }
     }
+
+    aim.0 = match drag.0 {
+        Some(start) => point_to_ground(p.pos, camera, camera_transform).map(|cur| start - cur),
+        None => None,
+    };
+}
+
+const FACING_SMOOTHING: f32 = 12.0;
+const AIM_MIN: f32 = 0.3;
+const FACE_MIN_SPEED: f32 = 0.3;
+const FACING_YAW_OFFSET: f32 = 0.0;
+
+fn update_facing(
+    time: Res<Time>,
+    aim: Res<Aim>,
+    player: Single<(&mut Transform, &Velocity), With<Player>>,
+) {
+    let (mut transform, velocity) = player.into_inner();
+
+    let dir = match aim.0 {
+        Some(v) if v.length() > AIM_MIN => v,
+        _ if velocity.0.length() > FACE_MIN_SPEED => velocity.0,
+        _ => return,
+    };
+
+    let yaw = dir.x.atan2(dir.z) + FACING_YAW_OFFSET;
+    let target = Quat::from_rotation_y(yaw);
+    let t = 1.0 - (-FACING_SMOOTHING * time.delta_secs()).exp();
+    transform.rotation = transform.rotation.slerp(target, t);
 }
 
 /// 移動システム

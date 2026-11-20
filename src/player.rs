@@ -3,16 +3,19 @@ use bevy::world_serialization::WorldInstanceReady;
 
 use std::time::Duration;
 
-use crate::Velocity;
+use crate::{Aim, AIM_MIN, Velocity};
 
 
 pub const PLAYER_MODEL_PATH: &str = "naked_man_back_shark.glb";
 // モデルの大きさ
-const SHARK_OFFSET: Vec3 = Vec3::new(0.0, 1.0, 2.4);
+const SHARK_OFFSET: Vec3 = Vec3::new(0.0, -0.5, 0.0);
 
 const REVEAL_SPEED: f32 = 4.0;
 const DOWN_SPEED: f32 = 6.0;
 const MODEL_SMOOTHING: f32 = 4.0;
+
+const ANIM_SPEED_MIN: f32 = 0.5;
+const ANIM_SPEED_MAX: f32 = 6.0;
 
 #[derive(Component)]
 pub struct Transforming {
@@ -66,6 +69,7 @@ pub fn setup_player_animations(
 pub fn update_player_visual(
     time: Res<Time>,
     animations: Res<ModelAnimations>,
+    aim: Res<Aim>,
     player: Single<(&Form, &Velocity, Option<&Transforming>), With<Player>>,
     mut model_root: Single<&mut Transform, With<ModelRoot>>,
     mut animation_players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
@@ -73,6 +77,15 @@ pub fn update_player_visual(
     mut current: Local<Option<AnimationNodeIndex>>,
 ) {
     let (form, velocity, transforming) = player.into_inner();
+
+    let pull = aim.0.map(|v| v.length()).filter(|l| *l > AIM_MIN);
+    let aiming = pull.is_some();
+
+    let intensity = match pull {
+        Some(len) => (len * form.power()).min(form.max_speed()) / form.max_speed(),
+        None => (velocity.0.length() / form.max_speed()).min(1.0),
+    };
+    let anim_speed = ANIM_SPEED_MIN + (ANIM_SPEED_MAX - ANIM_SPEED_MIN) * intensity;
 
     let placement = if transforming.is_some() {
         Form::Human
@@ -92,7 +105,7 @@ pub fn update_player_visual(
     for (name, mut visibility) in &mut parts {
         let show = match (name.as_str(), *form, transforming.is_some()) {
             ("Man" | "Shark" | "Crack", _, true) => true,
-            ("Man", _, _) => true,
+            ("Man", Form::Human, _) => true,
             ("Shark", Form::Shark, _) => true,
             ("Man" | "Shark" | "Crack", _, _) => false,
             _ => continue,
@@ -109,7 +122,7 @@ pub fn update_player_visual(
         Some(t) if t.target == Form::Human => animations.down,
         Some(_) => panic!(),
         None => match *form {
-            Form::Human if velocity.0 == Vec3::ZERO => animations.idle,
+            Form::Human if velocity.0 == Vec3::ZERO && !aiming => animations.idle,
             Form::Human => animations.walk,
             Form::Shark => animations.swim,
         },
@@ -132,6 +145,12 @@ pub fn update_player_visual(
                 },
             }
             *current = Some(wanted);
+        }
+
+        if transforming.is_none() && wanted != animations.idle {
+            if let Some(active) = player.animation_mut(wanted) {
+                active.set_speed(anim_speed);
+            }
         }
     }
 }
