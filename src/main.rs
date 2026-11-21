@@ -84,6 +84,12 @@ pub const BOUNCE: f32 = 0.5;
 const SPEED_THRESHOLD_ZERO: f32 = 0.05;
 const PULL_THRESHOLD: f32 = 0.5;
 
+#[derive(Resource, Default)]
+struct Strokes(u32);
+
+#[derive(Component)]
+struct StrokesText;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins
@@ -104,9 +110,14 @@ fn main() {
         .insert_resource(Seed::new_with_time())
         .init_resource::<DragStart>()
         .init_resource::<Aim>()
+        .init_resource::<Strokes>()
         .init_state::<GameState>()
         .add_systems(Startup, (setup_scene, setup_ui, setup_player_animations))
-        .add_systems(Update, (update_hp_ui, update_form_button_label))
+        .add_systems(Update, (
+                update_hp_ui,
+                update_form_button_label,
+                update_strokes_ui,
+        ))
         .add_systems(
             OnEnter(GameState::Playing),
             (cleanup_level, setup_level).chain(),
@@ -171,7 +182,14 @@ fn setup_ui(mut commands: Commands) {
                     },
                     BackgroundColor(Color::srgb(0.2, 0.8, 0.3)),
                 )]
-            )
+            ),
+            // 打数
+            (
+                StrokesText,
+                Text::new("STROKES: 0"),
+                TextFont { font_size: FontSize::Px(24.0), ..default() },
+                TextColor(Color::WHITE),
+            ),
         ]
     ));
     commands
@@ -363,6 +381,7 @@ fn drag_input(
     mut drag: ResMut<DragStart>,
     mut aim: ResMut<Aim>,
     mut player: Single<(&mut Velocity, &Form), (With<Player>, Without<Transforming>)>,
+    mut strokes: ResMut<Strokes>,
 ) {
     let (camera, camera_transform) = camera.into_inner();
     let (mut velocity, form) = player.into_inner();
@@ -384,6 +403,7 @@ fn drag_input(
                 return;
             }
             velocity.0 = (pull * form.power()).clamp_length_max(form.max_speed());
+            strokes.0 += 1;
         }
     }
 
@@ -498,17 +518,20 @@ fn cleanup_level(
     mut commands: Commands,
     entities: Query<Entity, With<LevelEntity>>,
     mut drag: ResMut<DragStart>,
+    mut strokes: ResMut<Strokes>,
 ) {
     for entity in &entities {
         commands.entity(entity).despawn();
     }
     drag.0 = None;
+    strokes.0 = 0;
 }
 
 fn spawn_result_overlay(
     commands: &mut Commands,
     title: &str,
     color: Color,
+    subtitle: &str,
     button_label: &str,
     next_maze: bool,
 ) {
@@ -532,6 +555,14 @@ fn spawn_result_overlay(
                 TextFont { font_size: FontSize::Px(72.0), ..default() },
                 TextColor(color),
             ));
+
+            if !subtitle.is_empty() {
+                parent.spawn((
+                    Text::new(subtitle),
+                    TextFont { font_size: FontSize::Px(36.0), ..default() },
+                    TextColor(Color::WHITE),
+                ));
+            }
 
             let mut button = parent.spawn((
                 Node {
@@ -558,16 +589,18 @@ fn show_game_over(mut commands: Commands) {
         &mut commands,
         "GAME OVER",
         Color::srgb(0.9, 0.2, 0.2),
+        "",
         "RETRY",
         false,
     );
 }
 
-fn show_clear(mut commands: Commands) {
+fn show_clear(mut commands: Commands, strokes: Res<Strokes>) {
     spawn_result_overlay(
         &mut commands,
         "CLEAR!",
         Color::srgb(1.0, 0.9, 0.2),
+        &format!("STROKES: {}", strokes.0),
         "NEXT MAZE",
         true,
     );
@@ -670,4 +703,10 @@ fn simplify(points: Vec<Vec3>) -> Vec<Vec3> {
         out.push(p);
     }
     out
+}
+
+fn update_strokes_ui(strokes: Res<Strokes>, mut text: Single<&mut Text, With<StrokesText>>) {
+    if strokes.is_changed() {
+        text.0 = format!("STROKES: {}", strokes.0);
+    }
 }
