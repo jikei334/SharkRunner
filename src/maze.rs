@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use std::collections::VecDeque;
+
 use crate::utils::Rng;
 
 
@@ -195,5 +197,69 @@ impl Maze {
             }
         }
         spots.into_iter().map(|(r, c)| self.tile_to_world(c, r)).collect()
+    }
+
+    pub fn world_to_tile(&self, p: Vec2) -> Option<(usize, usize)> {
+        let p0 = self.tile_to_world(0, 0);
+        let dc = self.tile_to_world(1, 0) - p0;
+        let dr = self.tile_to_world(0, 1) - p0;
+        let c = ((p - p0).dot(dc) / dc.length_squared()).round();
+        let r = ((p - p0).dot(dr) / dr.length_squared()).round();
+        if c < 0.0 || r < 0.0 || c >= self.tile_cols() as f32 || r >= self.tile_rows() as f32 {
+            return None;
+        }
+        Some((c as usize, r as usize))
+    }
+
+    pub fn shortest_path(&self, start: (usize, usize)) -> Option<Vec<Vec2>> {
+        let cols = self.tile_cols();
+        let rows = self.tile_rows();
+        let idx = |c: usize, r: usize| r * cols + c;
+
+        let mut seen = vec![false; cols * rows];
+        let mut prev: Vec<Option<usize>> = vec![None; cols * rows];
+        let mut queue = VecDeque::new();
+        seen[idx(start.0, start.1)] = true;
+        queue.push_back(start);
+
+        let goal_z = self.goal_z();
+        let half = self.tile() / 2.0;
+        let mut target: Option<(usize, usize)> = None;
+        let mut best = start;
+
+        while let Some((c, r)) = queue.pop_front() {
+            let z = self.tile_to_world(c, r).y;
+            if z < self.tile_to_world(best.0, best.1).y {
+                best = (c, r);
+            }
+            if z <= goal_z + half {
+                target = Some((c, r));
+                break;
+            }
+            for (dc, dr) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                let nc = c as i32 + dc;
+                let nr = r as i32 + dr;
+                if nc < 0 || nr < 0 || nc >= cols as i32 || nr >= rows as i32 {
+                    continue;
+                }
+                let (nc, nr) = (nc as usize, nr as usize);
+                if self.is_wall(nc, nr) || seen[idx(nc, nr)] {
+                    continue;
+                }
+                seen[idx(nc, nr)] = true;
+                prev[idx(nc, nr)] = Some(idx(c, r));
+                queue.push_back((nc, nr));
+            }
+        }
+
+        let (tc, tr) = target.unwrap_or(best);
+        let mut path = vec![self.tile_to_world(tc, tr)];
+        let mut cur = idx(tc, tr);
+        while let Some(p) = prev[cur] {
+            path.push(self.tile_to_world(p % cols, p / cols));
+            cur = p;
+        }
+        path.reverse();
+        Some(path)
     }
 }

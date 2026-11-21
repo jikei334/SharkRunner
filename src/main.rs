@@ -125,6 +125,7 @@ fn main() {
                 check_goal,
                 check_health,
                 camera_follow,
+                draw_guide,
             )
             .chain()
             .run_if(in_state(GameState::Playing)),
@@ -620,4 +621,53 @@ fn read_pointer(
         just_pressed: mouse.just_pressed(MouseButton::Left),
         just_released: mouse.just_released(MouseButton::Left),
     })
+}
+
+const GUIDE_Y: f32 = 0.1;
+
+fn draw_guide(
+    mut gizmos: Gizmos,
+    maze: Res<Maze>,
+    player: Single<&Transform, With<Player>>,
+) {
+    let pos = player.translation;
+    let Some(start) = maze.world_to_tile(Vec2::new(pos.x, pos.z)) else { return; };
+    let Some(path) = maze.shortest_path(start) else { return; };
+
+    let mut points = vec![Vec3::new(pos.x, GUIDE_Y, pos.z)];
+    points.extend(path.iter().skip(1).map(|p| Vec3::new(p.x, GUIDE_Y, p.y)));
+    if let Some(last) = path.last() {
+        points.push(Vec3::new(last.x, GUIDE_Y, maze.goal_z()));
+    }
+
+    let color = Color::srgb(1.0, 0.9, 0.2);
+
+    let points = simplify(points);
+    for seg in points.windows(2) {
+        gizmos.arrow(seg[0], seg[1], color).with_tip_length(0.6);
+    }
+}
+
+/// 重複した点と、一直線上の中間点を取り除く
+fn simplify(points: Vec<Vec3>) -> Vec<Vec3> {
+    let mut out: Vec<Vec3> = Vec::new();
+    for p in points {
+        if let Some(last) = out.last() {
+            if last.distance(p) < 0.01 {
+                continue;
+            }
+        }
+
+        if out.len() >= 2 {
+            let a = out[out.len() - 2];
+            let b = out[out.len() - 1];
+            let d1 = (b - a).normalize_or_zero();
+            let d2 = (p - b).normalize_or_zero();
+            if d1.dot(d2) > 0.999 {
+                out.pop();
+            }
+        }
+        out.push(p);
+    }
+    out
 }
