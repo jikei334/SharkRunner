@@ -87,6 +87,7 @@ pub struct Maze {
     h: usize,
     w: usize,
     walls: Vec<Vec<bool>>,
+    traps: Vec<(usize, usize)>,
 }
 
 impl Maze {
@@ -145,6 +146,7 @@ impl Maze {
             h,
             w,
             walls,
+            traps: Vec::new(),
         }
     }
 
@@ -185,6 +187,14 @@ impl Maze {
         )
     }
 
+    pub fn is_trap(&self, col: usize, row: usize) -> bool {
+        self.traps.contains(&(col, row))
+    }
+
+    pub fn trap_positions(&self) -> Vec<Vec2> {
+        self.traps.iter().map(|&(c, r)| self.tile_to_world(c, r)).collect()
+    }
+
     pub fn pick_women_spots(&self, women_count: usize, rng: &mut Rng) -> Vec<Vec2> {
         let mut spots = Vec::new();
         let mut tries = 0;
@@ -192,7 +202,7 @@ impl Maze {
             tries += 1;
             let r = 2 + rng.range(self.tile_rows() - 7);
             let c = 1 + rng.range(self.tile_cols() - 2);
-            if !self.walls[r][c] && !spots.contains(&(r, c)) {
+            if !self.walls[r][c] && !self.traps.contains(&(c, r)) && !spots.contains(&(r, c)) {
                 spots.push((r, c));
             }
         }
@@ -261,5 +271,30 @@ impl Maze {
         }
         path.reverse();
         Some(path)
+    }
+
+    pub fn place_traps(&mut self, count: usize, rng: &mut Rng) {
+        let cols = self.tile_cols();
+        let rows = self.tile_rows();
+        let idx = |c: usize, r: usize| r * cols + c;
+
+        let mut placables = Vec::new();
+        for r in 0..rows {
+            for c in 0..cols {
+                if self.walls[r][c] || self.is_trap(c, r) {
+                    continue;
+                }
+                placables.push((c, r));
+            }
+        }
+
+        for _ in 0..count {
+            if placables.is_empty() {
+                break;
+            }
+            let index = rng.range(placables.len());
+            let (c, r) = placables.remove(index);
+            self.traps.push((c, r));
+        }
     }
 }

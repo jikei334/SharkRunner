@@ -1,5 +1,6 @@
 pub mod maze;
 pub mod player;
+pub mod police;
 pub mod utils;
 pub mod wall;
 pub mod woman;
@@ -12,6 +13,10 @@ use player::{
     Form, ModelRoot, Player, PLAYER_MODEL_PATH, Transforming,
     finish_transform,
     on_player_model_ready, setup_player_animations, update_player_visual,
+};
+use police::{
+    PoliceAnimations,
+    Trap,
 };
 use utils::{Rng, Seed};
 use wall::{spawm_wall, Wall, wall_collision};
@@ -66,6 +71,7 @@ struct Aim(Option<Vec3>);
 pub enum GameState {
     #[default]
     Playing,
+    Caught,
     GameOver,
     Clear,
 }
@@ -90,6 +96,8 @@ struct Strokes(u32);
 #[derive(Component)]
 struct StrokesText;
 
+const TRAP_COUNT: usize = 6;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins
@@ -112,16 +120,28 @@ fn main() {
         .init_resource::<Aim>()
         .init_resource::<Strokes>()
         .init_state::<GameState>()
-        .add_systems(Startup, (setup_scene, setup_ui, setup_player_animations))
+        .add_systems(Startup, (
+                setup_scene,
+                setup_ui,
+                setup_player_animations,
+                PoliceAnimations::setup,
+        ))
         .add_systems(Update, (
                 update_hp_ui,
                 update_form_button_label,
                 update_strokes_ui,
+                PoliceAnimations::attack,
+                PoliceAnimations::caught.run_if(in_state(GameState::Caught)),
         ))
         .add_systems(
             OnEnter(GameState::Playing),
             (cleanup_level, setup_level).chain(),
         )
+        .add_systems(
+            OnEnter(GameState::Caught),
+            Player::stop,
+        )
+        .add_systems(Update, update_player_visual.run_if(in_state(GameState::Caught)))
         .add_systems(
             Update,
             (
@@ -133,6 +153,7 @@ fn main() {
                 finish_transform,
                 wall_collision,
                 woman_collision,
+                Trap::collision,
                 check_goal,
                 check_health,
                 camera_follow,
@@ -244,7 +265,8 @@ fn setup_level(
     asset_server: Res<AssetServer>,
 ) {
     let mut rng = Rng::new(seed.into_inner());
-    let maze = Maze::new(MAZE_H, MAZE_W, EXTRA_OPENINGS, &mut rng);
+    let mut maze = Maze::new(MAZE_H, MAZE_W, EXTRA_OPENINGS, &mut rng);
+    maze.place_traps(TRAP_COUNT, &mut rng);
     // 地面
     let ground_z = (maze.tile_to_world(0, 0).y + maze.tile_to_world(0, maze.tile_rows() - 1).y) / 2.0;
     commands.spawn((
@@ -318,6 +340,13 @@ fn setup_level(
         MeshMaterial3d(materials.add(Color::srgb(1.0, 0.9, 0.2))),
         Transform::from_xyz(0.0, 0.03, maze.goal_z()),
     ));
+
+    // トラップ
+    let trap_mesh = meshes.add(Cylinder::new(Trap::RADIUS, 1.5));
+    let trap_mat = materials.add(Color::srgb(0.9, 0.1, 0.1));
+    for pos in maze.trap_positions() {
+        PoliceAnimations::spawn(&mut commands, &asset_server, pos);
+    }
 
     // 女性
     for spot in maze.pick_women_spots(WOMEN_COUNT, &mut rng) {

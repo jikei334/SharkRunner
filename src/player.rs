@@ -41,6 +41,9 @@ pub struct ModelAnimations {
     down: AnimationNodeIndex,
 }
 
+#[derive(Component)]
+pub struct PlayerAnim;
+
 pub fn setup_player_animations(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -72,7 +75,7 @@ pub fn update_player_visual(
     aim: Res<Aim>,
     player: Single<(&Form, &Velocity, Option<&Transforming>), With<Player>>,
     mut model_root: Single<&mut Transform, With<ModelRoot>>,
-    mut animation_players: Query<(&mut AnimationPlayer, &mut AnimationTransitions)>,
+    mut animation_players: Query<(&mut AnimationPlayer, &mut AnimationTransitions), With<PlayerAnim>>,
     mut parts: Query<(&Name, &mut Visibility)>,
     mut current: Local<Option<AnimationNodeIndex>>,
 ) {
@@ -159,7 +162,7 @@ pub fn finish_transform(
     mut commands: Commands,
     animations: Res<ModelAnimations>,
     player: Single<(Entity, &mut Form, &Transforming), With<Player>>,
-    animation_players: Query<&AnimationPlayer>,
+    animation_players: Query<&AnimationPlayer, With<PlayerAnim>>,
 ) {
     let (entity, mut form, transforming) = player.into_inner();
     let node = match transforming.target {
@@ -176,20 +179,25 @@ pub fn finish_transform(
 }
 
 pub fn on_player_model_ready(
-    _ready: On<WorldInstanceReady>,
+    ready: On<WorldInstanceReady>,
     mut commands: Commands,
     animations: Res<ModelAnimations>,
-    player: Single<(Entity, &mut AnimationPlayer)>,
+    children: Query<&Children>,
+    mut animation_players: Query<&mut AnimationPlayer>,
 ) {
-    let (entity, mut player) = player.into_inner();
-    let mut transitions = AnimationTransitions::new();
-    transitions
-        .play(&mut player, animations.idle, Duration::ZERO)
-        .repeat();
-    commands
-        .entity(entity)
-        .insert(AnimationGraphHandle(animations.graph.clone()))
-        .insert(transitions);
+    for e in children.iter_descendants(ready.entity) {
+        let Ok(mut player) = animation_players.get_mut(e) else { continue };
+        let mut translations = AnimationTransitions::new();
+        translations
+            .play(&mut player, animations.idle, Duration::ZERO)
+            .repeat();
+        commands.entity(e).insert((
+            AnimationGraphHandle(animations.graph.clone()),
+            translations,
+            PlayerAnim,
+        ));
+        break;
+    }
 }
 
 #[derive(Component, Clone, Copy, PartialEq)]
@@ -246,3 +254,13 @@ impl Form {
 
 #[derive(Component)]
 pub struct Player;
+
+impl Player {
+    pub fn stop(
+        mut velocity: Single<&mut Velocity, With<Self>>,
+        mut aim: ResMut<Aim>,
+    ) {
+        velocity.0 = Vec3::ZERO;
+        aim.0 = None;
+    }
+}
