@@ -10,9 +10,7 @@ use bevy::asset::AssetMetaCheck;
 
 use maze::Maze;
 use player::{
-    Form, ModelRoot, Player, PLAYER_MODEL_PATH, Transforming,
-    finish_transform,
-    on_player_model_ready, setup_player_animations, update_player_visual,
+    Form, ModelRoot, Player, PlayerAnim, PLAYER_MODEL_PATH, Transforming,
 };
 use police::{
     PoliceAnimations,
@@ -72,6 +70,7 @@ pub enum GameState {
     #[default]
     Playing,
     Caught,
+    Defeated,
     GameOver,
     Clear,
 }
@@ -123,7 +122,7 @@ fn main() {
         .add_systems(Startup, (
                 setup_scene,
                 setup_ui,
-                setup_player_animations,
+                PlayerAnim::setup,
                 PoliceAnimations::setup,
         ))
         .add_systems(Update, (
@@ -141,7 +140,13 @@ fn main() {
             OnEnter(GameState::Caught),
             Player::stop,
         )
-        .add_systems(Update, update_player_visual.run_if(in_state(GameState::Caught)))
+        .add_systems(
+            Update,
+            PlayerAnim::update
+                .run_if(in_state(GameState::Caught).or(in_state(GameState::Defeated))),
+        )
+        .add_systems(OnEnter(GameState::Defeated), Player::start_defeat)
+        .add_systems(Update, Player::update_defeated.run_if(in_state(GameState::Defeated)))
         .add_systems(
             Update,
             (
@@ -149,8 +154,8 @@ fn main() {
                 drag_input,
                 update_facing,
                 movement,
-                update_player_visual,
-                finish_transform,
+                PlayerAnim::update,
+                PlayerAnim::finish_transform,
                 wall_collision,
                 woman_collision,
                 Trap::collision,
@@ -302,7 +307,7 @@ fn setup_level(
                     ),
                     Transform::from_xyz(0.0, -Form::HUMAN_RADIUS, 0.0),
                 ))
-                .observe(on_player_model_ready);
+                .observe(PlayerAnim::on_ready);
         });
 
     // 壁
@@ -342,8 +347,6 @@ fn setup_level(
     ));
 
     // トラップ
-    let trap_mesh = meshes.add(Cylinder::new(Trap::RADIUS, 1.5));
-    let trap_mat = materials.add(Color::srgb(0.9, 0.1, 0.1));
     for pos in maze.trap_positions() {
         PoliceAnimations::spawn(&mut commands, &asset_server, pos);
     }
@@ -382,7 +385,7 @@ fn check_health(
     health: Single<&Health, With<Player>>,
 ) {
     if health.0 <= 0.0 {
-        next_state.set(GameState::GameOver);
+        next_state.set(GameState::Defeated);
         info!("HP 0");
     }
 }

@@ -154,7 +154,7 @@ impl PoliceAnimations {
     ) {
         timer.0 += time.delta_secs();
         if timer.0 >= ATTACK_HIT_TIME {
-            next_state.set(crate::GameState::GameOver);
+            next_state.set(GameState::Defeated);
         }
     }
 }
