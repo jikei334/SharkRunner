@@ -1,4 +1,4 @@
-use bevy::prelude::*;
+use bevy::{asset, prelude::*};
 use bevy::world_serialization::WorldInstanceReady;
 
 use std::path::Component;
@@ -25,6 +25,19 @@ pub const ATTACK_HIT_TIME: f32 = 0.8;
 /// 攻撃中の印
 #[derive(Component)]
 pub struct Attacking;
+
+const AMBUSH_COUNT: usize = 4;
+const AMBUSH_RADIUS: f32 = 1.4;
+const DROP_HEIGHT: f32 = 10.0;
+const DROP_STAGGER: f32 = 4.0;
+const DROP_SPEED: f32 = 20.0;
+
+/// 落下中の印
+#[derive(Component)]
+pub struct Dropping;
+
+#[derive(Resource)]
+pub struct AmbushTimer(f32);
 
 /// アニメーション再生側に付ける印
 #[derive(Component)]
@@ -114,7 +127,12 @@ impl PoliceAnimations {
         }
     }
 
-    pub fn spawn(commands: &mut Commands, asset_server: &Res<AssetServer>, pos: Vec2) {
+    pub fn spawn(
+        commands: &mut Commands,
+        asset_server: &Res<AssetServer>,
+        pos: Vec2,
+        y: f32
+    ) -> Entity {
         commands
             .spawn((
                 LevelEntity,
@@ -122,10 +140,11 @@ impl PoliceAnimations {
                 WorldAssetRoot(
                     asset_server.load(GltfAssetLabel::Scene(0).from_asset(POLICE_MODEL_PATH)),
                 ),
-                Transform::from_xyz(pos.x, 0.0, pos.y).with_scale(Vec3::splat(POLICE_SCALE)),
+                Transform::from_xyz(pos.x, y, pos.y).with_scale(Vec3::splat(POLICE_SCALE)),
                 Visibility::default(),
             ))
-            .observe(Self::on_ready);
+            .observe(Self::on_ready)
+            .id()
     }
 
     pub fn attack(
@@ -155,6 +174,53 @@ impl PoliceAnimations {
         timer.0 += time.delta_secs();
         if timer.0 >= ATTACK_HIT_TIME {
             next_state.set(GameState::Defeated);
+        }
+    }
+
+    pub fn start_ambush(
+        mut commands: Commands,
+        asset_server: Res<AssetServer>,
+        player: Single<&Transform, With<Player>>,
+    ) {
+        let p = Vec2::new(player.translation.x, player.translation.z);
+        for i in 0..AMBUSH_COUNT {
+            let angle = i as f32 / AMBUSH_COUNT as f32 * std::f32::consts::TAU + 0.4;
+            let pos = p + Vec2::new(angle.cos(), angle.sin()) * AMBUSH_RADIUS;
+            let height = DROP_HEIGHT + i as f32 * DROP_STAGGER;
+            let e = Self::spawn(&mut commands, &asset_server, pos, height);
+            commands.entity(e).insert(Dropping);
+        }
+        commands.insert_resource(AmbushTimer(0.0));
+    }
+
+    pub fn ambush(
+        time: Res<Time>,
+        mut commands: Commands,
+        mut timer: ResMut<AmbushTimer>,
+        mut next_state: ResMut<NextState<GameState>>,
+        mut falling: Query<(Entity, &mut Transform), (With<Dropping>, Without<Player>)>,
+        player: Single<&Transform, (With<Player>, Without<Dropping>)>,
+    ) {
+        let target = player.translation;
+        let dt = time.delta_secs();
+
+        if falling.is_empty() {
+            timer.0 += dt;
+            if timer.0 >= ATTACK_HIT_TIME {
+                next_state.set(GameState::Defeated);
+            }
+            return;
+        }
+
+        for (entity, mut t) in &mut falling {
+            let dir = target - t.translation;
+            t.rotation = Quat::from_rotation_y(dir.x.atan2(dir.z));
+
+            t.translation.y -= DROP_SPEED * dt;
+            if t.translation.y <= 0.0 {
+                t.translation.y = 0.0;
+                commands.entity(entity).remove::<Dropping>().insert(Attacking);
+            }
         }
     }
 }

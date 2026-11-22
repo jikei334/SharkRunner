@@ -22,6 +22,7 @@ pub struct Transforming {
     pub target: Form,
 }
 
+const ANIM_ATTACK: usize = 0;
 const ANIM_DOWN: usize = 2;
 const ANIM_DOWN_MAN: usize = 3;
 const ANIM_DOWN_SHARK: usize = 4;
@@ -30,6 +31,7 @@ const ANIM_REVEAL: usize = 7;
 const ANIM_SWIM: usize = 8;
 const ANIM_WALK: usize = 9;
 
+pub const BITE_DURATION: f32 = 1.04;
 const HIT_DURATION: f32 = 0.58;
 
 #[derive(Component)]
@@ -45,10 +47,14 @@ pub struct ModelAnimations {
     down: AnimationNodeIndex,
     down_man: AnimationNodeIndex,
     down_shark: AnimationNodeIndex,
+    attack: AnimationNodeIndex,
 }
 
 #[derive(Component)]
 pub struct Downed;
+
+#[derive(Component)]
+pub struct Biting(pub f32);
 
 #[derive(Component)]
 pub struct PlayerAnim;
@@ -71,6 +77,7 @@ impl PlayerAnim {
         ]);
         let down_man = graph.add_clip(clip(ANIM_DOWN_MAN), 1.0, graph.root);
         let down_shark = graph.add_clip(clip(ANIM_DOWN_SHARK), 1.0, graph.root);
+        let attack = graph.add_clip(clip(ANIM_ATTACK), 1.0, graph.root);
         commands.insert_resource(ModelAnimations {
             graph: graphs.add(graph),
             idle: nodes[0],
@@ -80,6 +87,7 @@ impl PlayerAnim {
             down: nodes[4],
             down_man,
             down_shark,
+            attack,
         });
     }
 
@@ -87,7 +95,13 @@ impl PlayerAnim {
         time: Res<Time>,
         animations: Res<ModelAnimations>,
         aim: Res<Aim>,
-        player: Single<(&Form, &Velocity, Option<&Transforming>, Option<&Downed>), With<Player>>,
+        player: Single<(
+            &Form,
+            &Velocity,
+            Option<&Transforming>,
+            Option<&Downed>,
+            Option<&Biting>
+        ), With<Player>>,
         mut model_root: Single<&mut Transform, With<ModelRoot>>,
         mut animation_players: Query<(&mut AnimationPlayer, &mut AnimationTransitions), With<PlayerAnim>>,
         mut parts: Query<(&Name, &mut Visibility)>,
@@ -97,6 +111,7 @@ impl PlayerAnim {
             velocity,
             transforming,
             downed,
+            biting,
         ) = player.into_inner();
 
         let pull = aim.0.map(|v| v.length()).filter(|l| *l > AIM_MIN);
@@ -149,6 +164,7 @@ impl PlayerAnim {
                 Some(t) if t.target == Form::Human => animations.down,
                 Some(_) => panic!(),
                 None => match *form {
+                    Form::Shark if biting.is_some() => animations.attack,
                     Form::Human if velocity.0 == Vec3::ZERO && !aiming => animations.idle,
                     Form::Human => animations.walk,
                     Form::Shark => animations.swim,
@@ -159,8 +175,8 @@ impl PlayerAnim {
             if player.animation(wanted).is_none() {
                 let active = transitions
                     .play(&mut player, wanted, Duration::from_millis(150));
-                if downed.is_some() {
-                    // 倒れるモーションはリピートしない
+                if downed.is_some() || wanted == animations.attack {
+                    // リピートしない
                 } else {
                     match transforming {
                         Some(t) => match t.target {
@@ -225,6 +241,19 @@ impl PlayerAnim {
                 PlayerAnim,
             ));
             break;
+        }
+    }
+
+    pub fn tick_biting(
+        time: Res<Time>,
+        mut commands: Commands,
+        mut query: Query<(Entity, &mut Biting)>,
+    ) {
+        for (entity, mut biting) in &mut query {
+            biting.0 -= time.delta_secs();
+            if biting.0 <= 0.0 {
+                commands.entity(entity).remove::<Biting>();
+            }
         }
     }
 }

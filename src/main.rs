@@ -18,7 +18,7 @@ use police::{
 };
 use utils::{Rng, Seed};
 use wall::{spawm_wall, Wall, wall_collision};
-use woman::{spawn_woman, Woman, woman_collision};
+use woman::{Woman, WomanAnimations};
 
 
 const CAMERA_X: f32 = 0.0;
@@ -70,6 +70,7 @@ pub enum GameState {
     #[default]
     Playing,
     Caught,
+    Ambush,
     Defeated,
     GameOver,
     Clear,
@@ -124,6 +125,7 @@ fn main() {
                 setup_ui,
                 PlayerAnim::setup,
                 PoliceAnimations::setup,
+                WomanAnimations::setup,
         ))
         .add_systems(Update, (
                 update_hp_ui,
@@ -131,6 +133,8 @@ fn main() {
                 update_strokes_ui,
                 PoliceAnimations::attack,
                 PoliceAnimations::caught.run_if(in_state(GameState::Caught)),
+                WomanAnimations::react,
+                WomanAnimations::tick_eaten,
         ))
         .add_systems(
             OnEnter(GameState::Playing),
@@ -143,7 +147,11 @@ fn main() {
         .add_systems(
             Update,
             PlayerAnim::update
-                .run_if(in_state(GameState::Caught).or(in_state(GameState::Defeated))),
+                .run_if(
+                    in_state(GameState::Caught)
+                    .or(in_state(GameState::Defeated))
+                    .or(in_state(GameState::Ambush)),
+            ),
         )
         .add_systems(OnEnter(GameState::Defeated), Player::start_defeat)
         .add_systems(Update, Player::update_defeated.run_if(in_state(GameState::Defeated)))
@@ -157,7 +165,7 @@ fn main() {
                 PlayerAnim::update,
                 PlayerAnim::finish_transform,
                 wall_collision,
-                woman_collision,
+                Woman::collision,
                 Trap::collision,
                 check_goal,
                 check_health,
@@ -166,6 +174,14 @@ fn main() {
             )
             .chain()
             .run_if(in_state(GameState::Playing)),
+        )
+        .add_systems(
+            OnEnter(GameState::Ambush),
+            (Player::stop, PoliceAnimations::start_ambush)
+        )
+        .add_systems(
+            Update,
+            PoliceAnimations::ambush.run_if(in_state(GameState::Ambush))
         )
         .add_systems(OnEnter(GameState::GameOver), show_game_over)
         .add_systems(OnEnter(GameState::Clear), show_clear)
@@ -348,12 +364,12 @@ fn setup_level(
 
     // トラップ
     for pos in maze.trap_positions() {
-        PoliceAnimations::spawn(&mut commands, &asset_server, pos);
+        PoliceAnimations::spawn(&mut commands, &asset_server, pos, 0.0);
     }
 
     // 女性
     for spot in maze.pick_women_spots(WOMEN_COUNT, &mut rng) {
-        spawn_woman(&mut commands, &mut meshes, &mut materials, spot.x, spot.y);
+        Woman::spawn(&mut commands, &asset_server, spot.x, spot.y);
     }
 
     commands.insert_resource(maze);
