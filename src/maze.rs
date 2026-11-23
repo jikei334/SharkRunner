@@ -7,6 +7,10 @@ use crate::utils::Rng;
 
 // タイルの大きさ
 const TILE: f32 = 4.0;
+// 開始タイルから、この距離以内にはトラップも女性も置かない
+const START_SAFE_DISTANCE: usize = 2;
+// 女性をマス内に置くとき、マスの端から空ける余白
+const WOMAN_MARGIN: f32 = 0.6;
 
 
 // true が壁
@@ -202,11 +206,26 @@ impl Maze {
             tries += 1;
             let r = 2 + rng.range(self.tile_rows() - 7);
             let c = 1 + rng.range(self.tile_cols() - 2);
-            if !self.walls[r][c] && !self.traps.contains(&(c, r)) && !spots.contains(&(r, c)) {
-                spots.push((r, c));
+            if self.walls[r][c]
+                || self.is_trap(c, r)
+                || self.is_near_start(r, c)
+                || spots.contains(&(c, r))
+            {
+                continue;
             }
+            spots.push((r, c));
         }
-        spots.into_iter().map(|(r, c)| self.tile_to_world(c, r)).collect()
+
+        let max_offset = TILE / 2.0 - WOMAN_MARGIN;
+        spots
+            .into_iter()
+            .map(|(r, c)| {
+                let center = self.tile_to_world(c, r);
+                let dx = (rng.range(1001) as f32 / 500.0 - 1.0) * max_offset;
+                let dz = (rng.range(1001) as f32 / 500.0 - 1.0) * max_offset;
+                center + Vec2::new(dx, dz)
+            })
+        .collect()
     }
 
     pub fn world_to_tile(&self, p: Vec2) -> Option<(usize, usize)> {
@@ -281,7 +300,7 @@ impl Maze {
         let mut placables = Vec::new();
         for r in 0..rows {
             for c in 0..cols {
-                if self.walls[r][c] || self.is_trap(c, r) {
+                if self.walls[r][c] || self.is_trap(c, r) || self.is_near_start(c, r) {
                     continue;
                 }
                 placables.push((c, r));
@@ -296,5 +315,16 @@ impl Maze {
             let (c, r) = placables.remove(index);
             self.traps.push((c, r));
         }
+    }
+
+    /// プレイヤーの開始タイル
+    fn start_tile(&self) -> (usize, usize) {
+        (2 * (self.w / 2) + 1, 2 * (self.h - 1) + 1)
+    }
+
+    /// 開始位置に近いか
+    fn is_near_start(&self, col: usize, row: usize) -> bool {
+        let (sc, sr) = self.start_tile();
+        col.abs_diff(sc) + row.abs_diff(sr) <= START_SAFE_DISTANCE
     }
 }
