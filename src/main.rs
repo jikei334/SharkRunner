@@ -7,6 +7,7 @@ pub mod woman;
 
 use bevy::{picking::events::Pointer, prelude::*};
 use bevy::asset::AssetMetaCheck;
+use bevy::audio::Volume;
 
 use maze::Maze;
 use player::{
@@ -135,6 +136,7 @@ fn main() {
                 PoliceAnimations::caught.run_if(in_state(GameState::Caught)),
                 WomanAnimations::react,
                 WomanAnimations::tick_eaten,
+                start_bgm,
         ))
         .add_systems(
             OnEnter(GameState::Playing),
@@ -459,6 +461,36 @@ fn drag_input(
         Some(start) => point_to_ground(p.pos, camera, camera_transform).map(|cur| start - cur),
         None => None,
     };
+}
+
+const BGM_PATH: &str = "bgm_loop.ogg";
+const BGM_VOLUME: f32 = 0.5;
+
+#[derive(Component)]
+struct Bgm;
+
+fn start_bgm(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    touches: Res<Touches>,
+    mut started: Local<bool>,
+) {
+    if *started {
+        return;
+    }
+    if mouse.just_pressed(MouseButton::Left)
+        || keys.get_just_pressed().next().is_some()
+        || touches.any_just_pressed()
+    {
+        commands.spawn((
+                Bgm,
+                AudioPlayer::new(asset_server.load(BGM_PATH)),
+                PlaybackSettings::LOOP.with_volume(Volume::Linear(BGM_VOLUME)),
+        ));
+        *started = true;
+    }
 }
 
 const FACING_SMOOTHING: f32 = 12.0;
