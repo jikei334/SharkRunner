@@ -1,5 +1,6 @@
 use bevy::{asset, prelude::*};
 use bevy::world_serialization::WorldInstanceReady;
+use bevy::audio::Volume;
 
 use std::path::Component;
 use std::time::Duration;
@@ -31,6 +32,9 @@ const AMBUSH_RADIUS: f32 = 1.4;
 const DROP_HEIGHT: f32 = 10.0;
 const DROP_STAGGER: f32 = 4.0;
 const DROP_SPEED: f32 = 20.0;
+
+const SLASH_SE_PATH: &str = "chainsaw_slash.ogg";
+const SLASH_VOLUME: f32 = 0.6;
 
 /// 落下中の印
 #[derive(Component)]
@@ -83,6 +87,7 @@ pub struct PoliceAnimations {
     graph: Handle<AnimationGraph>,
     idle: AnimationNodeIndex,
     attack: AnimationNodeIndex,
+    slash_se: Handle<AudioSource>,
 }
 
 impl PoliceAnimations {
@@ -98,10 +103,12 @@ impl PoliceAnimations {
             clip(ANIM_IDLE),
             clip(ANIM_ATTACK),
         ]);
+        let slash_se: Handle<AudioSource> = asset_server.load(SLASH_SE_PATH);
         commands.insert_resource(Self {
             graph: graphs.add(graph),
             idle: nodes[0],
             attack: nodes[1],
+            slash_se,
         });
     }
 
@@ -148,11 +155,18 @@ impl PoliceAnimations {
     }
 
     pub fn attack(
+        mut commands: Commands,
         animations: Res<Self>,
         attacking: Query<Entity, Added<Attacking>>,
         mut anims: Query<(&PoliceAnim, &mut AnimationPlayer, &mut AnimationTransitions)>,
     ) {
         for root in &attacking {
+            commands.spawn((
+                    LevelEntity,
+                    AudioPlayer::new(animations.slash_se.clone()),
+                    PlaybackSettings::DESPAWN.with_volume(Volume::Linear(SLASH_VOLUME)),
+            ));
+
             for (pa, mut player, mut transitions) in &mut anims {
                 if pa.root == root {
                     transitions

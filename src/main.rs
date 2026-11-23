@@ -1,6 +1,7 @@
 pub mod maze;
 pub mod player;
 pub mod police;
+pub mod sfx;
 pub mod utils;
 pub mod wall;
 pub mod woman;
@@ -17,6 +18,7 @@ use police::{
     PoliceAnimations,
     Trap,
 };
+use sfx::Sfx;
 use utils::{Rng, Seed};
 use wall::{spawm_wall, Wall, wall_collision};
 use woman::{Woman, WomanAnimations};
@@ -69,6 +71,7 @@ struct Aim(Option<Vec3>);
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum GameState {
     #[default]
+    Title,
     Playing,
     Caught,
     Ambush,
@@ -127,6 +130,7 @@ fn main() {
                 PlayerAnim::setup,
                 PoliceAnimations::setup,
                 WomanAnimations::setup,
+                Sfx::setup,
         ))
         .add_systems(Update, (
                 update_hp_ui,
@@ -136,8 +140,13 @@ fn main() {
                 PoliceAnimations::caught.run_if(in_state(GameState::Caught)),
                 WomanAnimations::react,
                 WomanAnimations::tick_eaten,
-                start_bgm,
+                Sfx::play_scream,
+                Sfx::play_transform,
         ))
+        .add_systems(
+            OnEnter(GameState::Title),
+            show_title,
+        )
         .add_systems(
             OnEnter(GameState::Playing),
             (cleanup_level, setup_level).chain(),
@@ -167,6 +176,7 @@ fn main() {
                 PlayerAnim::update,
                 PlayerAnim::finish_transform,
                 wall_collision,
+                Sfx::play_wall_hit,
                 Woman::collision,
                 Trap::collision,
                 check_goal,
@@ -185,8 +195,18 @@ fn main() {
             Update,
             PoliceAnimations::ambush.run_if(in_state(GameState::Ambush))
         )
-        .add_systems(OnEnter(GameState::GameOver), show_game_over)
-        .add_systems(OnEnter(GameState::Clear), show_clear)
+        .add_systems(
+            OnEnter(GameState::GameOver),
+            (show_game_over, Sfx::play_game_over, Sfx::pause_bgm),
+        )
+        .add_systems(
+            OnEnter(GameState::Clear),
+            (show_clear, Sfx::play_clear, Sfx::pause_bgm),
+        )
+        .add_systems(
+            OnEnter(GameState::Playing),
+            Sfx::resume_bgm,
+        )
         .run();
 }
 
@@ -469,30 +489,6 @@ const BGM_VOLUME: f32 = 0.5;
 #[derive(Component)]
 struct Bgm;
 
-fn start_bgm(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    touches: Res<Touches>,
-    mut started: Local<bool>,
-) {
-    if *started {
-        return;
-    }
-    if mouse.just_pressed(MouseButton::Left)
-        || keys.get_just_pressed().next().is_some()
-        || touches.any_just_pressed()
-    {
-        commands.spawn((
-                Bgm,
-                AudioPlayer::new(asset_server.load(BGM_PATH)),
-                PlaybackSettings::LOOP.with_volume(Volume::Linear(BGM_VOLUME)),
-        ));
-        *started = true;
-    }
-}
-
 const FACING_SMOOTHING: f32 = 12.0;
 const AIM_MIN: f32 = 0.3;
 const FACE_MIN_SPEED: f32 = 0.3;
@@ -607,13 +603,19 @@ fn cleanup_level(
     strokes.0 = 0;
 }
 
+enum ResultKind {
+    Retry,
+    NextMaze,
+    Start,
+}
+
 fn spawn_result_overlay(
     commands: &mut Commands,
     title: &str,
     color: Color,
     subtitle: &str,
     button_label: &str,
-    next_maze: bool,
+    kind: ResultKind,
 ) {
     commands.spawn((
         LevelEntity,
@@ -656,12 +658,37 @@ fn spawn_result_overlay(
                     TextColor(Color::WHITE),
                 )],
             ));
-            if next_maze {
-                button.observe(on_next_maze_click);
-            } else {
-                button.observe(on_retry_click);
+            match kind {
+                ResultKind::Retry => { button.observe(on_retry_click); },
+                ResultKind::NextMaze => { button.observe(on_next_maze_click); },
+                ResultKind::Start => { button.observe(on_start_click); },
             }
         });
+}
+
+fn show_title(mut commands: Commands) {
+    spawn_result_overlay(
+        &mut commands,
+        "SHARK RUNNER",
+        Color::WHITE,
+        "",
+        "TAP TO START",
+        ResultKind::Start,
+    );
+}
+
+fn on_start_click(
+    _click: On<Pointer<Click>>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    commands.spawn((
+            Bgm,
+            AudioPlayer::new(asset_server.load(BGM_PATH)),
+            PlaybackSettings::LOOP.with_volume(Volume::Linear(BGM_VOLUME)),
+    ));
+    next_state.set(GameState::Playing);
 }
 
 fn show_game_over(mut commands: Commands) {
@@ -671,7 +698,7 @@ fn show_game_over(mut commands: Commands) {
         Color::srgb(0.9, 0.2, 0.2),
         "",
         "RETRY",
-        false,
+        ResultKind::Retry,
     );
 }
 
@@ -682,7 +709,7 @@ fn show_clear(mut commands: Commands, strokes: Res<Strokes>) {
         Color::srgb(1.0, 0.9, 0.2),
         &format!("STROKES: {}", strokes.0),
         "NEXT MAZE",
-        true,
+        ResultKind::NextMaze,
     );
 }
 
