@@ -580,12 +580,21 @@ fn switch_form(
     }
 }
 
+// この縦横比より縦長なら、カメラを引く
+const REF_ASPECT: f32 = 16.0 / 9.0;
+// 引く倍率の上限
+const MAX_CAMERA_ZOOM: f32 = 2.0;
+
 fn camera_follow(
     time: Res<Time>,
+    window: Single<&Window>,
     player: Single<&Transform, (With<Player>, Without<Camera3d>)>,
     mut camera: Single<&mut Transform, (With<Camera3d>, Without<Player>)>,
 ) {
-    let target = player.translation + Vec3::new(CAMERA_X, CAMERA_Y, CAMERA_Z);
+    let aspect = window.width() / window.height();
+    let zoom = (REF_ASPECT / aspect).sqrt().clamp(1.0, MAX_CAMERA_ZOOM);
+
+    let target = player.translation + Vec3::new(CAMERA_X, CAMERA_Y * zoom, CAMERA_Z * zoom);
     let t = 1.0 - (-CAMERA_FOLLOW_SPEED * time.delta_secs()).exp();
     camera.translation = camera.translation.lerp(target, t);
 }
